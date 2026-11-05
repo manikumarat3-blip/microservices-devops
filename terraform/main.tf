@@ -27,6 +27,8 @@ resource "aws_instance" "microservices" {
 
   subnet_id = data.aws_subnets.default.ids[0]
 
+  key_name = var.key_name
+
   vpc_security_group_ids = [
     aws_security_group.microservices.id
   ]

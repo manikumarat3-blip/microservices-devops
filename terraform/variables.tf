@@ -21,3 +21,9 @@ variable "ssh_cidr" {
   type        = string
   default     = "0.0.0.0/0"
 }
+
+variable "key_name" {
+  description = "EC2 SSH key pair name"
+  type        = string
+  default     = "new-key"
+}
