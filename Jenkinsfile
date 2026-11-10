@@ -2,235 +2,278 @@ pipeline {
 
     agent any
 
-    options {
-        skipDefaultCheckout(true)
-        timestamps()
-        disableConcurrentBuilds()
-        timeout(time: 30, unit: 'MINUTES')
-    }
-
     environment {
         AWS_REGION = 'ap-southeast-2'
+
         AWS_ACCOUNT_ID = '368451698271'
 
-        ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-
-        USER_REPO = "${ECR_REGISTRY}/microservices-devops/user-service"
-        PRODUCT_REPO = "${ECR_REGISTRY}/microservices-devops/product-service"
-        ORDER_REPO = "${ECR_REGISTRY}/microservices-devops/order-service"
+        ECR_REGISTRY = '368451698271.dkr.ecr.ap-southeast-2.amazonaws.com'
 
         IMAGE_TAG = '1.0.0'
 
-        USER_IMAGE = "${USER_REPO}:${IMAGE_TAG}"
-        PRODUCT_IMAGE = "${PRODUCT_REPO}:${IMAGE_TAG}"
-        ORDER_IMAGE = "${ORDER_REPO}:${IMAGE_TAG}"
+        USER_IMAGE = '368451698271.dkr.ecr.ap-southeast-2.amazonaws.com/microservices-devops/user-service:1.0.0'
+        PRODUCT_IMAGE = '368451698271.dkr.ecr.ap-southeast-2.amazonaws.com/microservices-devops/product-service:1.0.0'
+        ORDER_IMAGE = '368451698271.dkr.ecr.ap-southeast-2.amazonaws.com/microservices-devops/order-service:1.0.0'
 
         EC2_HOST = '16.176.148.52'
         EC2_USER = 'ubuntu'
-
-        AWS_CREDENTIALS_ID = 'aws-ecr-credentials'
-        SSH_CREDENTIALS_ID = 'ec2-ssh-key'
-
-        DEPLOY_DIR = '/home/ubuntu/microservices-devops'
-
-        TEST_NETWORK = 'microservices-test-network'
-        TEST_USER_CONTAINER = 'user-service-test'
-        TEST_PRODUCT_CONTAINER = 'product-service-test'
-        TEST_ORDER_CONTAINER = 'order-service-test'
+        EC2_APP_DIR = '/home/ubuntu/microservices-devops'
     }
 
     stages {
 
-        // ============================================================
-        // 1. CHECKOUT
-        // ============================================================
+        /*
+         * ============================================================
+         * CHECKOUT
+         * ============================================================
+         */
 
         stage('Checkout') {
             steps {
+
+                echo '=========================================='
+                echo 'Checking Out Source Code'
+                echo '=========================================='
+
                 checkout scm
-            }
-        }
 
-        // ============================================================
-        // 2. VALIDATE
-        // ============================================================
-
-        stage('Validate') {
-            steps {
                 sh '''
-                    set -e
+                    echo "Current directory:"
+                    pwd
 
-                    echo "=========================================="
-                    echo "Docker Version"
-                    echo "=========================================="
-                    docker --version
+                    echo
+                    echo "Git commit:"
+                    git rev-parse --short HEAD
 
-                    echo "=========================================="
-                    echo "Docker Compose Version"
-                    echo "=========================================="
-                    docker compose version
+                    echo
+                    echo "Git branch:"
+                    git branch --show-current
 
-                    echo "=========================================="
-                    echo "Validating docker-compose.yml"
-                    echo "=========================================="
-                    docker compose -f docker-compose.yml config -q
-
-                    echo "=========================================="
-                    echo "Validating docker-compose.ec2.yml"
-                    echo "=========================================="
-
-                    USER_IMAGE=validation/user:latest \
-                    PRODUCT_IMAGE=validation/product:latest \
-                    ORDER_IMAGE=validation/order:latest \
-                    docker compose -f docker-compose.ec2.yml config -q
-
-                    echo "Compose validation successful."
+                    echo
+                    echo "Repository contents:"
+                    ls -la
                 '''
             }
         }
 
-        // ============================================================
-        // 3. BUILD IMAGES
-        // ============================================================
 
-        stage('Build Images') {
+        /*
+         * ============================================================
+         * VALIDATE
+         * ============================================================
+         */
+
+        stage('Validate') {
             steps {
+
+                echo '=========================================='
+                echo 'Validating Docker Environment'
+                echo '=========================================='
+
                 sh '''
                     set -e
 
-                    echo "=========================================="
-                    echo "Building User Service"
-                    echo "=========================================="
+                    echo "Docker version:"
+                    docker --version
+
+                    echo
+                    echo "Docker Compose version:"
+                    docker compose version
+
+                    echo
+                    echo "Validating docker-compose.yml:"
+                    docker compose -f docker-compose.yml config -q
+
+                    echo
+                    echo "Validating docker-compose.ec2.yml:"
+                    USER_IMAGE="${USER_IMAGE}" \
+                    PRODUCT_IMAGE="${PRODUCT_IMAGE}" \
+                    ORDER_IMAGE="${ORDER_IMAGE}" \
+                    docker compose -f docker-compose.ec2.yml config -q
+
+                    echo
+                    echo "Docker Compose validation successful."
+                '''
+            }
+        }
+
+
+        /*
+         * ============================================================
+         * BUILD IMAGES
+         * ============================================================
+         */
+
+        stage('Build Images') {
+            steps {
+
+                echo '=========================================='
+                echo 'Building Docker Images'
+                echo '=========================================='
+
+                sh '''
+                    set -e
+
+                    echo "Building user-service..."
                     docker build \
                         -t user-service:${IMAGE_TAG} \
                         ./user-service
 
-                    echo "=========================================="
-                    echo "Building Product Service"
-                    echo "=========================================="
+                    echo
+                    echo "Building product-service..."
                     docker build \
                         -t product-service:${IMAGE_TAG} \
                         ./product-service
 
-                    echo "=========================================="
-                    echo "Building Order Service"
-                    echo "=========================================="
+                    echo
+                    echo "Building order-service..."
                     docker build \
                         -t order-service:${IMAGE_TAG} \
                         ./order-service
 
-                    echo "All Docker images built successfully."
-
+                    echo
+                    echo "Docker images created:"
                     docker images | grep -E \
-                        'user-service|product-service|order-service'
+                        "user-service|product-service|order-service"
                 '''
             }
         }
 
-        // ============================================================
-        // 4. TEST IMAGES
-        // ============================================================
+
+        /*
+         * ============================================================
+         * TEST IMAGES
+         * ============================================================
+         */
 
         stage('Test Images') {
-    steps {
-        sh '''
-            set -e
+            steps {
 
-            echo "=========================================="
-            echo "Cleaning previous test resources..."
-            echo "=========================================="
+                echo '=========================================='
+                echo 'Testing Docker Images'
+                echo '=========================================='
 
-            docker rm -f user-service-test product-service-test order-service-test 2>/dev/null || true
-            docker network rm microservices-test-network 2>/dev/null || true
+                sh '''
+                    set -e
 
-            docker network create microservices-test-network
+                    NETWORK_NAME="microservices-test-network"
 
-            echo "Starting User Service test container..."
-            docker run -d \
-              --name user-service-test \
-              --network microservices-test-network \
-              -e SERVICE_NAME=user-service \
-              -e SERVICE_PORT=8001 \
-              user-service:1.0.0
+                    echo "Creating test network..."
+                    docker network create ${NETWORK_NAME} 2>/dev/null || true
 
-            echo "Starting Product Service test container..."
-            docker run -d \
-              --name product-service-test \
-              --network microservices-test-network \
-              -e SERVICE_NAME=product-service \
-              -e SERVICE_PORT=8002 \
-              product-service:1.0.0
+                    echo
+                    echo "Removing old test containers..."
+                    docker rm -f \
+                        test-user-service \
+                        test-product-service \
+                        test-order-service \
+                        2>/dev/null || true
 
-            echo "Starting Order Service test container..."
-            docker run -d \
-              --name order-service-test \
-              --network microservices-test-network \
-              -e SERVICE_NAME=order-service \
-              -e SERVICE_PORT=8003 \
-              -e USER_SERVICE_URL=http://user-service-test:8001 \
-              -e PRODUCT_SERVICE_URL=http://product-service-test:8002 \
-              order-service:1.0.0
 
-            echo "Waiting for containers to start..."
-            sleep 10
+                    echo
+                    echo "Starting user-service..."
+                    docker run -d \
+                        --name test-user-service \
+                        --network ${NETWORK_NAME} \
+                        user-service:${IMAGE_TAG}
 
-            echo "=========================================="
-            echo "User Service Health Check"
-            echo "=========================================="
 
-            docker exec user-service-test \
-              python -c "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"
+                    echo "Starting product-service..."
+                    docker run -d \
+                        --name test-product-service \
+                        --network ${NETWORK_NAME} \
+                        product-service:${IMAGE_TAG}
 
-            echo "User Service: HEALTHY"
 
-            echo "=========================================="
-            echo "Product Service Health Check"
-            echo "=========================================="
+                    echo "Starting order-service..."
+                    docker run -d \
+                        --name test-order-service \
+                        --network ${NETWORK_NAME} \
+                        order-service:${IMAGE_TAG}
 
-            docker exec product-service-test \
-              python -c "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"
 
-            echo "Product Service: HEALTHY"
+                    echo
+                    echo "Waiting for applications..."
+                    sleep 5
 
-            echo "=========================================="
-            echo "Order Service Health Check"
-            echo "=========================================="
 
-            docker exec order-service-test \
-              python -c "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"
+                    echo
+                    echo "Testing user-service..."
 
-            echo "Order Service: HEALTHY"
+                    docker exec test-user-service \
+                        python -c "
+import urllib.request
+response = urllib.request.urlopen(
+    'http://localhost:8001/health',
+    timeout=5
+)
+print(response.read().decode())
+"
 
-            echo "=========================================="
-            echo "All Docker Image Tests Passed"
-            echo "=========================================="
-        '''
-    }
 
-    post {
-        always {
-            sh '''
-                echo "Cleaning test containers..."
+                    echo
+                    echo "Testing product-service..."
 
-                docker rm -f \
-                  user-service-test \
-                  product-service-test \
-                  order-service-test \
-                  2>/dev/null || true
+                    docker exec test-product-service \
+                        python -c "
+import urllib.request
+response = urllib.request.urlopen(
+    'http://localhost:8002/health',
+    timeout=5
+)
+print(response.read().decode())
+"
 
-                docker network rm \
-                  microservices-test-network \
-                  2>/dev/null || true
-            '''
+
+                    echo
+                    echo "Testing order-service..."
+
+                    docker exec test-order-service \
+                        python -c "
+import urllib.request
+response = urllib.request.urlopen(
+    'http://localhost:8003/health',
+    timeout=5
+)
+print(response.read().decode())
+"
+
+
+                    echo
+                    echo "All application health checks passed."
+
+
+                    echo
+                    echo "Removing test containers..."
+
+                    docker rm -f \
+                        test-user-service \
+                        test-product-service \
+                        test-order-service
+
+
+                    echo
+                    echo "Removing test network..."
+
+                    docker network rm ${NETWORK_NAME} 2>/dev/null || true
+                '''
+            }
         }
-    }
-}
-        // ============================================================
-        // 5. TAG IMAGES
-        // ============================================================
+
+
+        /*
+         * ============================================================
+         * TAG IMAGES
+         * ============================================================
+         */
 
         stage('Tag Images') {
             steps {
+
+                echo '=========================================='
+                echo 'Tagging Images For ECR'
+                echo '=========================================='
+
                 sh '''
                     set -e
 
@@ -246,252 +289,364 @@ pipeline {
                         order-service:${IMAGE_TAG} \
                         ${ORDER_IMAGE}
 
-                    echo "Images tagged successfully."
 
-                    docker images | grep ${ECR_REGISTRY}
+                    echo
+                    echo "ECR tagged images:"
+                    docker images | grep \
+                        "368451698271.dkr.ecr.ap-southeast-2.amazonaws.com"
                 '''
             }
         }
 
-        // ============================================================
-        // 6. ECR LOGIN
-        // ============================================================
+
+        /*
+         * ============================================================
+         * ECR LOGIN
+         * ============================================================
+         */
 
         stage('ECR Login') {
             steps {
+
+                echo '=========================================='
+                echo 'Logging Into Amazon ECR'
+                echo '=========================================='
+
                 withCredentials([
                     [$class: 'AmazonWebServicesCredentialsBinding',
-                     credentialsId: "${AWS_CREDENTIALS_ID}"]
+                     credentialsId: 'aws-ecr-credentials']
                 ]) {
+
                     sh '''
                         set -e
 
-                        echo "Logging into Amazon ECR..."
+                        aws --version
+
+                        echo
+                        echo "Logging into ECR..."
 
                         aws ecr get-login-password \
-                            --region ${AWS_REGION} | \
-                        docker login \
+                            --region ${AWS_REGION} \
+                        | docker login \
                             --username AWS \
                             --password-stdin ${ECR_REGISTRY}
 
+                        echo
                         echo "ECR login successful."
                     '''
                 }
             }
         }
 
-        // ============================================================
-        // 7. PUSH IMAGES
-        // ============================================================
+
+        /*
+         * ============================================================
+         * PUSH IMAGES
+         * ============================================================
+         */
 
         stage('Push Images') {
             steps {
+
+                echo '=========================================='
+                echo 'Pushing Images To Amazon ECR'
+                echo '=========================================='
+
                 sh '''
                     set -e
 
-                    echo "Pushing User Service..."
+                    echo "Pushing user-service..."
                     docker push ${USER_IMAGE}
 
-                    echo "Pushing Product Service..."
+                    echo
+                    echo "Pushing product-service..."
                     docker push ${PRODUCT_IMAGE}
 
-                    echo "Pushing Order Service..."
+                    echo
+                    echo "Pushing order-service..."
                     docker push ${ORDER_IMAGE}
 
-                    echo "=========================================="
+                    echo
                     echo "All images pushed successfully."
-                    echo "=========================================="
-
-                    echo ${USER_IMAGE}
-                    echo ${PRODUCT_IMAGE}
-                    echo ${ORDER_IMAGE}
                 '''
             }
         }
 
-        // ============================================================
-        // 8. DEPLOY TO EC2
-        // ============================================================
+
+        /*
+         * ============================================================
+         * DEPLOY TO EC2
+         * ============================================================
+         */
 
         stage('Deploy to EC2') {
             steps {
 
-                sshagent(credentials: ["${SSH_CREDENTIALS_ID}"]) {
+                echo '=========================================='
+                echo 'Deploying Application To EC2'
+                echo '=========================================='
 
-                    withCredentials([
-                        [$class: 'AmazonWebServicesCredentialsBinding',
-                         credentialsId: "${AWS_CREDENTIALS_ID}"]
-                    ]) {
+                sshagent(['ec2-ssh-key']) {
 
-                        sh '''
-                            set -e
+                    sh '''
+                        set -e
 
-                            echo "=========================================="
-                            echo "Preparing EC2 Deployment"
-                            echo "=========================================="
+                        echo "Preparing EC2 application directory..."
 
-                            ssh -o StrictHostKeyChecking=no \
-                                ${EC2_USER}@${EC2_HOST} \
-                                "mkdir -p ${DEPLOY_DIR}/nginx"
+                        ssh -o StrictHostKeyChecking=no \
+                            ${EC2_USER}@${EC2_HOST} \
+                            "mkdir -p ${EC2_APP_DIR}/nginx"
 
-                            echo "Copying Docker Compose file..."
 
-                            scp -o StrictHostKeyChecking=no \
-                                docker-compose.ec2.yml \
-                                ${EC2_USER}@${EC2_HOST}:${DEPLOY_DIR}/docker-compose.ec2.yml
+                        echo
+                        echo "Copying Docker Compose file..."
 
-                            echo "Copying Nginx configuration..."
+                        scp -o StrictHostKeyChecking=no \
+                            docker-compose.ec2.yml \
+                            ${EC2_USER}@${EC2_HOST}:${EC2_APP_DIR}/docker-compose.ec2.yml
 
-                            scp -o StrictHostKeyChecking=no \
-                                nginx/nginx.conf \
-                                ${EC2_USER}@${EC2_HOST}:${DEPLOY_DIR}/nginx/nginx.conf
 
-                            echo "Deployment files copied successfully."
+                        echo
+                        echo "Copying Nginx configuration..."
 
-                            echo "Logging into ECR on EC2..."
+                        scp -o StrictHostKeyChecking=no \
+                            nginx/nginx.conf \
+                            ${EC2_USER}@${EC2_HOST}:${EC2_APP_DIR}/nginx/nginx.conf
 
-                            ssh -o StrictHostKeyChecking=no \
-                                ${EC2_USER}@${EC2_HOST} \
-                                "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}"
 
-                            echo "Pulling latest images..."
+                        echo
+                        echo "Logging into ECR on EC2..."
 
-                            ssh -o StrictHostKeyChecking=no \
-                                ${EC2_USER}@${EC2_HOST} \
-                                "docker pull ${USER_IMAGE}"
+                        ssh -o StrictHostKeyChecking=no \
+                            ${EC2_USER}@${EC2_HOST} "
+                                aws ecr get-login-password \
+                                    --region ${AWS_REGION} \
+                                | docker login \
+                                    --username AWS \
+                                    --password-stdin ${ECR_REGISTRY}
+                            "
 
-                            ssh -o StrictHostKeyChecking=no \
-                                ${EC2_USER}@${EC2_HOST} \
-                                "docker pull ${PRODUCT_IMAGE}"
 
-                            ssh -o StrictHostKeyChecking=no \
-                                ${EC2_USER}@${EC2_HOST} \
-                                "docker pull ${ORDER_IMAGE}"
+                        echo
+                        echo "Pulling latest images on EC2..."
 
-                            echo "Images pulled successfully."
+                        ssh -o StrictHostKeyChecking=no \
+                            ${EC2_USER}@${EC2_HOST} "
+                                docker pull ${USER_IMAGE}
+                                docker pull ${PRODUCT_IMAGE}
+                                docker pull ${ORDER_IMAGE}
+                            "
 
-                            echo "Starting application..."
 
-                            ssh -o StrictHostKeyChecking=no \
-                                ${EC2_USER}@${EC2_HOST} \
-                                "cd ${DEPLOY_DIR} && \
-                                 USER_IMAGE=${USER_IMAGE} \
-                                 PRODUCT_IMAGE=${PRODUCT_IMAGE} \
-                                 ORDER_IMAGE=${ORDER_IMAGE} \
-                                 docker compose \
-                                 -f docker-compose.ec2.yml \
-                                 up -d \
-                                 --remove-orphans"
+                        echo
+                        echo "Starting application..."
 
-                            echo "Application deployment completed."
-                        '''
-                    }
+                        ssh -o StrictHostKeyChecking=no \
+                            ${EC2_USER}@${EC2_HOST} "
+                                cd ${EC2_APP_DIR} &&
+                                export USER_IMAGE='${USER_IMAGE}' &&
+                                export PRODUCT_IMAGE='${PRODUCT_IMAGE}' &&
+                                export ORDER_IMAGE='${ORDER_IMAGE}' &&
+                                docker compose \
+                                    -f docker-compose.ec2.yml \
+                                    up -d \
+                                    --remove-orphans
+                            "
+
+
+                        echo
+                        echo "Waiting for containers to become healthy..."
+
+                        sleep 10
+
+
+                        echo
+                        echo "Application deployment completed."
+                    '''
                 }
             }
         }
 
-        // ============================================================
-        // 9. VERIFY DEPLOYMENT
-        // ============================================================
+
+        /*
+         * ============================================================
+         * VERIFY DEPLOYMENT
+         * ============================================================
+         */
 
         stage('Verify Deployment') {
-    steps {
-        sshagent(['ec2-ssh-key']) {
-            sh '''
-                set -e
+            steps {
 
-                echo "=========================================="
-                echo "Checking Running Containers"
-                echo "=========================================="
+                echo '=========================================='
+                echo 'Verifying EC2 Deployment'
+                echo '=========================================='
 
-                ssh -o StrictHostKeyChecking=no ubuntu@16.176.148.52 "
-                    cd /home/ubuntu/microservices-devops &&
-                    export USER_IMAGE='368451698271.dkr.ecr.ap-southeast-2.amazonaws.com/microservices-devops/user-service:1.0.0' &&
-                    export PRODUCT_IMAGE='368451698271.dkr.ecr.ap-southeast-2.amazonaws.com/microservices-devops/product-service:1.0.0' &&
-                    export ORDER_IMAGE='368451698271.dkr.ecr.ap-southeast-2.amazonaws.com/microservices-devops/order-service:1.0.0' &&
-                    docker compose -f docker-compose.ec2.yml ps
-                "
+                sshagent(['ec2-ssh-key']) {
 
-                echo "=========================================="
-                echo "Checking Nginx Health"
-                echo "=========================================="
+                    sh '''
+                        set -e
 
-                curl -f http://16.176.148.52/health
 
-                echo
-                echo "=========================================="
-                echo "Checking User Service"
-                echo "=========================================="
+                        echo "=========================================="
+                        echo "Checking Running Containers"
+                        echo "=========================================="
 
-                curl -f http://16.176.148.52/users/health
 
-                echo
-                echo "=========================================="
-                echo "Checking Product Service"
-                echo "=========================================="
+                        ssh -o StrictHostKeyChecking=no \
+                            ${EC2_USER}@${EC2_HOST} "
+                                cd ${EC2_APP_DIR} &&
+                                export USER_IMAGE='${USER_IMAGE}' &&
+                                export PRODUCT_IMAGE='${PRODUCT_IMAGE}' &&
+                                export ORDER_IMAGE='${ORDER_IMAGE}' &&
+                                docker compose \
+                                    -f docker-compose.ec2.yml \
+                                    ps
+                            "
 
-                curl -f http://16.176.148.52/products/health
 
-                echo
-                echo "=========================================="
-                echo "Checking Order Service"
-                echo "=========================================="
+                        echo
+                        echo "=========================================="
+                        echo "Checking Nginx Health"
+                        echo "=========================================="
 
-                curl -f http://16.176.148.52/orders/health
 
-                echo
-                echo "=========================================="
-                echo "Deployment Verification Successful"
-                echo "=========================================="
-            "
+                        curl -f \
+                            http://${EC2_HOST}/health
+
+
+                        echo
+                        echo
+                        echo "=========================================="
+                        echo "Checking User Service"
+                        echo "=========================================="
+
+
+                        curl -f \
+                            http://${EC2_HOST}/users/health
+
+
+                        echo
+                        echo
+                        echo "=========================================="
+                        echo "Checking Product Service"
+                        echo "=========================================="
+
+
+                        curl -f \
+                            http://${EC2_HOST}/products/health
+
+
+                        echo
+                        echo
+                        echo "=========================================="
+                        echo "Checking Order Service"
+                        echo "=========================================="
+
+
+                        curl -f \
+                            http://${EC2_HOST}/orders/health
+
+
+                        echo
+                        echo
+                        echo "=========================================="
+                        echo "Deployment Verification Successful"
+                        echo "=========================================="
+                    '''
+                }
+            }
         }
     }
-}
-           
-       
 
-    // ================================================================
-    // POST ACTIONS
-    // ================================================================
+
+    /*
+     * ================================================================
+     * POST ACTIONS
+     * ================================================================
+     */
 
     post {
 
         success {
+
             echo '''
 ==========================================
 PIPELINE SUCCESS
 ==========================================
-All microservices were:
-1. Checked out
-2. Validated
-3. Built
-4. Tested
-5. Tagged
-6. Pushed to Amazon ECR
-7. Deployed to EC2
-8. Health checked successfully
+
+Microservices CI/CD deployment completed successfully.
+
+Services:
+  - user-service
+  - product-service
+  - order-service
+  - nginx
+
+Docker Images:
+  - ECR user-service
+  - ECR product-service
+  - ECR order-service
+
+Deployment:
+  - EC2 deployment successful
+  - Container verification successful
+  - Nginx health check successful
+  - Application health checks successful
+
 ==========================================
 '''
         }
 
+
         failure {
+
             echo '''
 ==========================================
 PIPELINE FAILED
 ==========================================
-Check the Jenkins console log for the
-failed stage and error details.
+
+Please check the Jenkins console output
+for the failed stage.
+
 ==========================================
 '''
         }
 
+
         always {
+
+            echo '=========================================='
+            echo 'Cleaning Jenkins Workspace'
+            echo '=========================================='
+
+
             sh '''
-                echo "Cleaning unused Docker images..."
+                echo "Removing local test containers..."
+
+                docker rm -f \
+                    test-user-service \
+                    test-product-service \
+                    test-order-service \
+                    2>/dev/null || true
+
+
+                echo
+                echo "Removing test network..."
+
+                docker network rm \
+                    microservices-test-network \
+                    2>/dev/null || true
+
+
+                echo
+                echo "Removing dangling Docker images..."
 
                 docker image prune -f || true
+
+
+                echo
+                echo "Cleanup completed."
             '''
         }
     }
 }
-
