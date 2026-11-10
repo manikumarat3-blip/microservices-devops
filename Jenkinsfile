@@ -396,79 +396,58 @@ pipeline {
 
         stage('Verify Deployment') {
             steps {
+                sshagent(['ec2-ssh-key']) {
+            sh '''
+                set -e
 
-                sshagent(credentials: ["${SSH_CREDENTIALS_ID}"]) {
+                echo "=========================================="
+                echo "Checking Running Containers"
+                echo "=========================================="
 
-                    sh '''
-                        set -e
+                ssh -o StrictHostKeyChecking=no ubuntu@16.176.148.52 "
+                    cd /home/ubuntu/microservices-devops &&
+                    export USER_IMAGE='368451698271.dkr.ecr.ap-southeast-2.amazonaws.com/microservices-devops/user-service:1.0.0' &&
+                    export PRODUCT_IMAGE='368451698271.dkr.ecr.ap-southeast-2.amazonaws.com/microservices-devops/product-service:1.0.0' &&
+                    export ORDER_IMAGE='368451698271.dkr.ecr.ap-southeast-2.amazonaws.com/microservices-devops/order-service:1.0.0' &&
+                    docker compose -f docker-compose.ec2.yml ps
+                "
 
-                        echo "=========================================="
-                        echo "Checking Running Containers"
-                        echo "=========================================="
+                echo "=========================================="
+                echo "Checking Nginx Health"
+                echo "=========================================="
 
-                        ssh -o StrictHostKeyChecking=no \
-                            ${EC2_USER}@${EC2_HOST} \
-                            "cd ${DEPLOY_DIR} && \
-                             docker compose \
-                             -f docker-compose.ec2.yml \
-                             ps"
+                curl -f http://16.176.148.52/health
 
-                        echo "=========================================="
-                        echo "User Service Health"
-                        echo "=========================================="
+                echo
+                echo "=========================================="
+                echo "Checking User Service"
+                echo "=========================================="
 
-                        ssh -o StrictHostKeyChecking=no \
-                            ${EC2_USER}@${EC2_HOST} \
-                            "curl --fail --silent --show-error \
-                             --max-time 10 \
-                             http://localhost:8001/health"
+                curl -f http://16.176.148.52/users/health
 
-                        echo
+                echo
+                echo "=========================================="
+                echo "Checking Product Service"
+                echo "=========================================="
 
-                        echo "=========================================="
-                        echo "Product Service Health"
-                        echo "=========================================="
+                curl -f http://16.176.148.52/products/health
 
-                        ssh -o StrictHostKeyChecking=no \
-                            ${EC2_USER}@${EC2_HOST} \
-                            "curl --fail --silent --show-error \
-                             --max-time 10 \
-                             http://localhost:8002/health"
+                echo
+                echo "=========================================="
+                echo "Checking Order Service"
+                echo "=========================================="
 
-                        echo
+                curl -f http://16.176.148.52/orders/health
 
-                        echo "=========================================="
-                        echo "Order Service Health"
-                        echo "=========================================="
-
-                        ssh -o StrictHostKeyChecking=no \
-                            ${EC2_USER}@${EC2_HOST} \
-                            "curl --fail --silent --show-error \
-                             --max-time 10 \
-                             http://localhost:8003/health"
-
-                        echo
-
-                        echo "=========================================="
-                        echo "Nginx Health"
-                        echo "=========================================="
-
-                        ssh -o StrictHostKeyChecking=no \
-                            ${EC2_USER}@${EC2_HOST} \
-                            "curl --fail --silent --show-error \
-                             --max-time 10 \
-                             http://localhost/health"
-
-                        echo
-
-                        echo "=========================================="
-                        echo "Deployment Verification Successful"
-                        echo "=========================================="
-                    '''
-                }
-            }
+                echo
+                echo "=========================================="
+                echo "Deployment Verification Successful"
+                echo "=========================================="
+            "
         }
     }
+}
+       
 
     // ================================================================
     // POST ACTIONS
