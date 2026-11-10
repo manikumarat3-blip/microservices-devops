@@ -132,110 +132,99 @@ pipeline {
         // ============================================================
 
         stage('Test Images') {
-            steps {
-                sh '''
-                    set -e
+    steps {
+        sh '''
+            set -e
 
-                    echo "Cleaning previous test resources..."
+            echo "=========================================="
+            echo "Cleaning previous test resources..."
+            echo "=========================================="
 
-                    docker rm -f \
-                        ${TEST_USER_CONTAINER} \
-                        ${TEST_PRODUCT_CONTAINER} \
-                        ${TEST_ORDER_CONTAINER} \
-                        2>/dev/null || true
+            docker rm -f user-service-test product-service-test order-service-test 2>/dev/null || true
+            docker network rm microservices-test-network 2>/dev/null || true
 
-                    docker network rm ${TEST_NETWORK} \
-                        2>/dev/null || true
+            docker network create microservices-test-network
 
-                    docker network create ${TEST_NETWORK}
+            echo "Starting User Service test container..."
+            docker run -d \
+              --name user-service-test \
+              --network microservices-test-network \
+              -e SERVICE_NAME=user-service \
+              -e SERVICE_PORT=8001 \
+              user-service:1.0.0
 
-                    echo "Starting User Service test container..."
+            echo "Starting Product Service test container..."
+            docker run -d \
+              --name product-service-test \
+              --network microservices-test-network \
+              -e SERVICE_NAME=product-service \
+              -e SERVICE_PORT=8002 \
+              product-service:1.0.0
 
-                    docker run -d \
-                        --name ${TEST_USER_CONTAINER} \
-                        --network ${TEST_NETWORK} \
-                        -e SERVICE_NAME=user-service \
-                        -e SERVICE_PORT=8001 \
-                        user-service:${IMAGE_TAG}
+            echo "Starting Order Service test container..."
+            docker run -d \
+              --name order-service-test \
+              --network microservices-test-network \
+              -e SERVICE_NAME=order-service \
+              -e SERVICE_PORT=8003 \
+              -e USER_SERVICE_URL=http://user-service-test:8001 \
+              -e PRODUCT_SERVICE_URL=http://product-service-test:8002 \
+              order-service:1.0.0
 
-                    echo "Starting Product Service test container..."
+            echo "Waiting for containers to start..."
+            sleep 10
 
-                    docker run -d \
-                        --name ${TEST_PRODUCT_CONTAINER} \
-                        --network ${TEST_NETWORK} \
-                        -e SERVICE_NAME=product-service \
-                        -e SERVICE_PORT=8002 \
-                        product-service:${IMAGE_TAG}
+            echo "=========================================="
+            echo "User Service Health Check"
+            echo "=========================================="
 
-                    echo "Starting Order Service test container..."
+            docker exec user-service-test \
+              python -c "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"
 
-                    docker run -d \
-                        --name ${TEST_ORDER_CONTAINER} \
-                        --network ${TEST_NETWORK} \
-                        -e SERVICE_NAME=order-service \
-                        -e SERVICE_PORT=8003 \
-                        -e USER_SERVICE_URL=http://${TEST_USER_CONTAINER}:8001 \
-                        -e PRODUCT_SERVICE_URL=http://${TEST_PRODUCT_CONTAINER}:8002 \
-                        order-service:${IMAGE_TAG}
+            echo "User Service: HEALTHY"
 
-                    echo "Waiting for containers to start..."
-                    sleep 15
+            echo "=========================================="
+            echo "Product Service Health Check"
+            echo "=========================================="
 
-                    echo "=========================================="
-                    echo "User Service Health Check"
-                    echo "=========================================="
+            docker exec product-service-test \
+              python -c "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"
 
-                    docker exec ${TEST_USER_CONTAINER} \
-                        curl --fail --silent --show-error \
-                        --max-time 10 \
-                        http://localhost:8001/health
+            echo "Product Service: HEALTHY"
 
-                    echo
+            echo "=========================================="
+            echo "Order Service Health Check"
+            echo "=========================================="
 
-                    echo "=========================================="
-                    echo "Product Service Health Check"
-                    echo "=========================================="
+            docker exec order-service-test \
+              python -c "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"
 
-                    docker exec ${TEST_PRODUCT_CONTAINER} \
-                        curl --fail --silent --show-error \
-                        --max-time 10 \
-                        http://localhost:8002/health
+            echo "Order Service: HEALTHY"
 
-                    echo
+            echo "=========================================="
+            echo "All Docker Image Tests Passed"
+            echo "=========================================="
+        '''
+    }
 
-                    echo "=========================================="
-                    echo "Order Service Health Check"
-                    echo "=========================================="
+    post {
+        always {
+            sh '''
+                echo "Cleaning test containers..."
 
-                    docker exec ${TEST_ORDER_CONTAINER} \
-                        curl --fail --silent --show-error \
-                        --max-time 10 \
-                        http://localhost:8003/health
+                docker rm -f \
+                  user-service-test \
+                  product-service-test \
+                  order-service-test \
+                  2>/dev/null || true
 
-                    echo
-
-                    echo "All service health checks passed."
-                '''
-            }
-
-            post {
-                always {
-                    sh '''
-                        echo "Cleaning test containers..."
-
-                        docker rm -f \
-                            ${TEST_USER_CONTAINER} \
-                            ${TEST_PRODUCT_CONTAINER} \
-                            ${TEST_ORDER_CONTAINER} \
-                            2>/dev/null || true
-
-                        docker network rm ${TEST_NETWORK} \
-                            2>/dev/null || true
-                    '''
-                }
-            }
+                docker network rm \
+                  microservices-test-network \
+                  2>/dev/null || true
+            '''
         }
-
+    }
+}
         // ============================================================
         // 5. TAG IMAGES
         // ============================================================
